@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>HelpDesk Admin / Guest با فایل‌ها و rename</title>
+<style>
+body { font-family: Tahoma, sans-serif; background:#f8f9fa; margin:0; direction:rtl; }
+header { background:#0d6efd; color:white; padding:10px; text-align:center; }
+#container { display:flex; height:100vh; }
+#categories { width:300px; background:#fff; border-right:1px solid #ccc; overflow:auto; padding:10px; }
+#categories h2 { padding:10px; margin:0; background:#eee; }
+#categories ul { list-style:none; padding:0; margin:0; }
+.category, .topic { padding:6px; border-bottom:1px solid #eee; cursor:pointer; background:#fff; display:flex; justify-content:space-between; align-items:center; }
+.category.active { background:#cce5ff; font-weight:bold; }
+.topic { padding-left:20px; background:#fafafa; }
+.topic-actions button { margin-left:5px; }
+#content { flex:1; padding:20px; overflow:auto; }
+#topicContent textarea { width:100%; height:150px; margin-top:10px; }
+#filesList { margin-top:10px; }
+.file-item { margin:8px 0; padding:8px; border:1px solid #ddd; border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:space-between; }
+.file-left { display:flex; align-items:center; gap:10px; }
+.file-name { max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-actions { display:inline-block; margin-right:10px; }
+.file-actions button { margin-left:6px; }
+button { margin:2px; padding:6px 10px; cursor:pointer; }
+.modal { display:flex; justify-content:center; align-items:center; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; }
+.modal-content { background:#fff; padding:20px; border-radius:6px; text-align:center; min-width:320px; }
+.modal-content input, .modal-content select { padding:8px; width:90%; margin-top:10px; box-sizing:border-box; }
+.role-badge { display:inline-block; padding:4px 8px; border-radius:6px; background:#eee; margin-left:8px; }
+img.uploaded-image { max-width:140px; max-height:120px; display:block; margin:5px 0; border:1px solid #ccc; border-radius:4px; }
+.controls-inline { display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📒 HelpDesk — Admin / Guest</h1>
+</header>
+<div id="container">
+  <div id="categories">
+    <h2>دسته‌ها <span id="roleBadge" class="role-badge">GUEST</span></h2>
+    <ul id="catList"></ul>
+    <div style="padding:8px">
+      <button id="addCatBtn" style="display:none;" onclick="addCategory()">➕ دسته جدید</button>
+      <button id="addTopicBtn" style="display:none;" onclick="addTopic()">➕ موضوع جدید</button>
+      <button id="logoutBtn" style="display:none;" onclick="logout()">🚪 خروج</button>
+    </div>
+  </div>
+  <div id="content">
+    <div id="topicTitle"><b>موضوع انتخاب نشده</b></div>
+    <div id="topicContent"></div>
+    <!-- filesList will be rendered inside topicContent to keep choose-file above previews -->
+  </div>
+</div>
+
+<div id="loginModal" class="modal">
+  <div class="modal-content">
+    <h3>ورود</h3>
+    <select id="loginRole">
+      <option value="admin">Admin</option>
+      <option value="guest">Guest</option>
+    </select><br>
+    <input id="loginPwd" type="password" placeholder="پسورد" autocomplete="off"><br>
+    <button onclick="attemptLogin()">ورود</button>
+  </div>
+</div>
+
+<script>
+const ADMIN_PASSWORD = 'Svr01@123';
+const GUEST_PASSWORD = 'reza090160';
+const STORAGE_KEY = 'helpdesk-data-full';
+
+let data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+if(!data.categories){
+  data = { categories:[{ id: Date.now(), title:'Printer', topics:[{id:1,title:'نصب با IP',content:'', files:[]}] }] };
+}
+let currentCat = data.categories.length ? data.categories[0].id : null;
+let currentTopic = null;
+let role = sessionStorage.getItem('helpdesk-role') || null;
+
+function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+function getCurrentTopicObj(){ if(!currentCat || !currentTopic) return null; const cat = data.categories.find(c=>c.id===currentCat); if(!cat) return null; return cat.topics.find(t=>t.id===currentTopic); }
+
+function setRole(r){ role = r; sessionStorage.setItem('helpdesk-role', role); document.getElementById('roleBadge').innerText = role.toUpperCase(); toggleUIByRole(); updateLogoutButton(); renderCategories(); document.getElementById('loginModal').style.display='none'; }
+function toggleUIByRole(){ document.getElementById('addCatBtn').style.display = role==='admin' ? 'inline-block' : 'none'; document.getElementById('addTopicBtn').style.display = (role==='admin' || role==='guest') ? 'inline-block' : 'none'; }
+function updateLogoutButton(){ document.getElementById('logoutBtn').style.display = (role==='guest'||role==='admin')?'inline-block':'none'; }
+
+function attemptLogin(){
+  const selectedRole = document.getElementById('loginRole').value;
+  const pwd = document.getElementById('loginPwd').value;
+  if(selectedRole==='admin' && pwd===ADMIN_PASSWORD){ setRole('admin'); document.getElementById('loginPwd').value=''; alert('خوش آمدی، ادمین'); return; }
+  if(selectedRole==='guest' && pwd===GUEST_PASSWORD){ setRole('guest'); document.getElementById('loginPwd').value=''; alert('ورود به عنوان Guest انجام شد'); return; }
+  alert('پسورد اشتباه است');
+}
+function logout(){ sessionStorage.removeItem('helpdesk-role'); role=null; currentCat=null; currentTopic=null; document.getElementById('roleBadge').innerText='GUEST'; toggleUIByRole(); updateLogoutButton(); clearContent(); document.getElementById('loginModal').style.display='flex'; document.getElementById('loginPwd').value=''; }
+
+function renderCategories(){
+  const ul = document.getElementById('catList'); ul.innerHTML='';
+  data.categories.forEach(c=>{
+    const li = document.createElement('li'); li.className='category'; li.textContent=c.title;
+    if(c.id===currentCat) li.classList.add('active');
+    li.onclick = ()=>{ currentCat=c.id; renderCategories(); renderTopicsUnderCategory(c); };
+    ul.appendChild(li);
+
+    // render topics for this category immediately under the category
+    c.topics.forEach(t=>{
+      const tli = document.createElement('li'); tli.className='topic';
+      const span = document.createElement('span'); span.textContent=t.title; span.style.cursor='pointer';
+      span.onclick = ()=>{ currentCat = c.id; showTopicById(c.id, t.id); };
+      tli.appendChild(span);
+      if(role==='admin'){
+        const actions = document.createElement('div'); actions.className='topic-actions';
+        const editBtn = document.createElement('button'); editBtn.textContent='✏️'; editBtn.onclick=(ev)=>{ ev.stopPropagation(); showTopicById(c.id,t.id); editTopicById(c.id,t.id); };
+        const delBtn = document.createElement('button'); delBtn.textContent='🗑️'; delBtn.onclick=(ev)=>{ ev.stopPropagation(); deleteTopicById(c.id,t.id); };
+        actions.appendChild(editBtn); actions.appendChild(delBtn);
+        tli.appendChild(actions);
+      }
+      ul.appendChild(tli);
+    });
+  });
+}
+
+function renderTopicsUnderCategory(cat){
+  // categories already render topics inline; keep for compatibility
+}
+
+function showTopicById(catId, topicId){
+  currentCat = catId; currentTopic = topicId;
+  const cat = data.categories.find(c=>c.id===catId);
+  if(!cat) return;
+  const t = cat.topics.find(x=>x.id===topicId);
+  if(!t) return;
+  showTopic(t);
+}
+
+function showTopic(t){
+  currentTopic = t.id;
+  document.getElementById('topicTitle').innerHTML = `<b>${t.title}</b>`;
+  // put filesList inside topicContent so previews appear under the input (not elsewhere)
+  let html = `<textarea id='topicTextarea' ${role==='guest'?'readonly':''}>${t.content}</textarea><div style='height:8px'></div>`;
+  if(role==='admin'){
+    html += `<div class='controls-inline'><button onclick='saveTopic()'>💾 ذخیره</button><input type='file' id='fileInput' style='display:inline-block'><button onclick='uploadFile()'>📎 اضافه کردن فایل</button></div>`;
+  }
+  html += `<div id='filesList'></div>`;
+  document.getElementById('topicContent').innerHTML = html;
+  renderFiles();
+}
+
+function saveTopic(){
+  const t = getCurrentTopicObj(); if(!t) return alert('هیچ موضوعی انتخاب نشده');
+  const ta = document.getElementById('topicTextarea'); if(ta) t.content = ta.value;
+  save(); alert('ذخیره شد');
+}
+
+function editTopicById(catId, topicId){
+  // showTopic already loads textarea; admin can edit there
+  showTopicById(catId, topicId);
+}
+
+function deleteTopicById(catId, topicId){ if(!confirm('آیا مطمئن هستید؟')) return; const cat = data.categories.find(c=>c.id===catId); if(!cat) return; cat.topics = cat.topics.filter(tt=>tt.id!==topicId); if(currentTopic===topicId) clearContent(); save(); renderCategories(); }
+
+function clearContent(){ document.getElementById('topicTitle').innerHTML='<b>موضوع انتخاب نشده</b>'; document.getElementById('topicContent').innerHTML=''; }
+
+function addCategory(){ if(role!=='admin') return alert('برای این کار نیاز به ادمین داری'); const t=prompt('نام دسته جدید:'); if(!t) return; const newCat={id:Date.now(), title:t, topics:[]}; data.categories.push(newCat); currentCat=newCat.id; save(); renderCategories(); }
+function addTopic(){ if(!(role==='admin'||role==='guest')) return alert('برای اضافه کردن موضوع باید وارد شوی'); if(!currentCat) return alert('ابتدا یک دسته انتخاب کنید'); const title=prompt('عنوان موضوع جدید:'); if(!title) return; const cat=data.categories.find(c=>c.id===currentCat); const newTopic={id:Date.now(), title, content:'', files:[]}; cat.topics.push(newTopic); currentTopic=newTopic.id; save(); renderCategories(); showTopic(newTopic); }
+
+function uploadFile(){
+  if(role!=='admin') return alert('فقط Admin می‌تواند فایل اضافه کند');
+  const input=document.getElementById('fileInput'); if(!input || input.files.length===0) return;
+  const file=input.files[0];
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const t = getCurrentTopicObj(); if(!t) return alert('ابتدا موضوع را انتخاب کنید');
+    if(!t.files) t.files=[];
+    const fid = Date.now() + Math.floor(Math.random()*1000);
+    t.files.push({fid, name:file.name, content:e.target.result, type:file.type});
+    save(); renderFiles();
+  };
+  reader.readAsDataURL(file);
+  input.value='';
+}
+
+function renderFiles(){
+  const t = getCurrentTopicObj(); const div = document.getElementById('filesList'); if(!div) return; div.innerHTML='';
+  if(!t || !t.files || t.files.length===0) return;
+  t.files.forEach((f, idx)=>{
+    const fileDiv = document.createElement('div'); fileDiv.className='file-item';
+    const left = document.createElement('div'); left.className='file-left';
+    // show thumbnail if image
+    if(f.type && f.type.startsWith('image/')){
+      const img = document.createElement('img'); img.src = f.content; img.className='uploaded-image'; left.appendChild(img);
+    }
+    // name or link
+    const nameWrap = document.createElement('div'); nameWrap.className='file-name';
+    if(f.type && f.type==='application/pdf'){
+      const a = document.createElement('a'); a.href = f.content; a.textContent = f.name; a.target = '_blank'; nameWrap.appendChild(a);
+    } else if(f.type && f.type.startsWith('image/')){
+      const span = document.createElement('span'); span.textContent = f.name; nameWrap.appendChild(span);
+    } else {
+      const a = document.createElement('a'); a.href = f.content; a.textContent = f.name; a.target = '_blank'; nameWrap.appendChild(a);
+    }
+    left.appendChild(nameWrap);
+    fileDiv.appendChild(left);
+
+    // actions for admin
+    if(role==='admin'){
+      const actions = document.createElement('div'); actions.className='file-actions';
+      const renameBtn = document.createElement('button'); renameBtn.textContent='✏️';
+      renameBtn.onclick = ()=>{ const newName = prompt('نام جدید فایل:', f.name); if(newName){ f.name = newName; save(); renderFiles(); } };
+      const delBtn = document.createElement('button'); delBtn.textContent='🗑️';
+      delBtn.onclick = ()=>{ if(confirm('حذف فایل؟')){ const t2 = getCurrentTopicObj(); if(!t2) return; const idx2 = t2.files.findIndex(x=>x.fid===f.fid); if(idx2>-1){ t2.files.splice(idx2,1); save(); renderFiles(); } } };
+      actions.appendChild(renameBtn); actions.appendChild(delBtn);
+      fileDiv.appendChild(actions);
+    }
+
+    div.appendChild(fileDiv);
+  });
+}
+
+function getCurrentTopicObj(){ if(!currentCat || !currentTopic) return null; const cat = data.categories.find(c=>c.id===currentCat); if(!cat) return null; return cat.topics.find(t=>t.id===currentTopic); }
+
+window.onload=function(){ if(!role) document.getElementById('loginModal').style.display='flex'; else setRole(role); };
+</script>
+</body>
+</html>
