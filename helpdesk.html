@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>HelpDesk Admin / Guest با گروه‌ها و دسته‌های زیرمجموعه</title>
+<style>
+body { font-family: Tahoma, sans-serif; background:#f8f9fa; margin:0; direction:rtl; }
+header { background:#0d6efd; color:white; padding:10px; text-align:center; }
+#container { display:flex; height:100vh; }
+#categories { width:300px; background:#fff; border-right:1px solid #ccc; overflow:auto; padding:10px; }
+#categories h2 { padding:10px; margin:0; background:#eee; }
+#categories ul { list-style:none; padding:0; margin:0; }
+.group { padding:8px; border-bottom:1px solid #eee; cursor:pointer; background:#f5f7fb; font-weight:bold; display:flex; justify-content:space-between; align-items:center; }
+.group.active { background:#cbe4ff; }
+.category { padding:6px 10px; border-bottom:1px solid #f0f0f0; cursor:pointer; background:#fff; display:flex; justify-content:space-between; align-items:center; margin-right:10px; }
+.category.active { background:#e6f2ff; font-weight:bold; }
+.topic { padding-left:20px; background:#fafafa; }
+.topic-actions button, .cat-actions button { margin-left:5px; }
+#content { flex:1; padding:20px; overflow:auto; }
+#topicContent textarea { width:100%; height:150px; margin-top:10px; }
+#filesList { margin-top:10px; }
+.file-item { margin:8px 0; padding:8px; border:1px solid #ddd; border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:space-between; }
+.file-left { display:flex; align-items:center; gap:10px; }
+.file-name { max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-actions { display:inline-block; margin-right:10px; }
+.file-actions button { margin-left:6px; }
+button { margin:2px; padding:6px 10px; cursor:pointer; }
+.modal { display:flex; justify-content:center; align-items:center; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; }
+.modal-content { background:#fff; padding:20px; border-radius:6px; text-align:center; min-width:320px; }
+.modal-content input, .modal-content select { padding:8px; width:90%; margin-top:10px; box-sizing:border-box; }
+.role-badge { display:inline-block; padding:4px 8px; border-radius:6px; background:#eee; margin-left:8px; }
+img.uploaded-image { max-width:140px; max-height:120px; display:block; margin:5px 0; border:1px solid #ccc; border-radius:4px; }
+.controls-inline { display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📒 HelpDesk — Admin / Guest</h1>
+</header>
+<div id="container">
+  <div id="categories">
+    <h2>دسته‌ها <span id="roleBadge" class="role-badge">GUEST</span></h2>
+    <ul id="catList"></ul>
+    <div style="padding:8px">
+      <button id="addCatBtn" style="display:none;" onclick="addCategory()">➕ دسته جدید</button>
+      <button id="addTopicBtn" style="display:none;" onclick="addTopic()">➕ موضوع جدید</button>
+      <button id="resetDataBtn" onclick="resetData()">🧹 بازنشانی داده‌ها</button>
+      <button id="logoutBtn" style="display:none;" onclick="logout()">🚪 خروج</button>
+    </div>
+  </div>
+  <div id="content">
+    <div id="topicTitle"><b>موضوع انتخاب نشده</b></div>
+    <div id="topicContent"></div>
+  </div>
+</div>
+
+<div id="loginModal" class="modal">
+  <div class="modal-content">
+    <h3>ورود</h3>
+    <select id="loginRole">
+      <option value="admin">Admin</option>
+      <option value="guest">Guest</option>
+    </select><br>
+    <input id="loginPwd" type="password" placeholder="پسورد" autocomplete="off"><br>
+    <button onclick="attemptLogin()">ورود</button>
+  </div>
+</div>
+
+<script>
+const ADMIN_PASSWORD = 'Svr01@123';
+const GUEST_PASSWORD = 'reza090160';
+const STORAGE_KEY = 'helpdesk-data-full';
+
+let data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+
+if(!data.groups){
+  const baseGroups = [
+    { id: Date.now(), title:'SAZIBA', categories:[] },
+    { id: Date.now()+1, title:'شخصی', categories:[] }
+  ];
+  if(data.categories && Array.isArray(data.categories) && data.categories.length){
+    baseGroups[0].categories = data.categories.map(c=>{
+      return { id: c.id || Date.now()+Math.floor(Math.random()*100000), title: c.title||'بدون عنوان', topics: c.topics || [] };
+    });
+  }
+  data = { groups: baseGroups };
+}
+
+let currentGroup = data.groups.length ? data.groups[0].id : null;
+let currentCat = null;
+let currentTopic = null;
+let role = sessionStorage.getItem('helpdesk-role') || null;
+
+function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+
+function getCurrentTopicObj(){
+  if(!currentGroup || !currentCat || !currentTopic) return null;
+  const g = data.groups.find(x=>x.id===currentGroup); if(!g) return null;
+  const c = g.categories.find(x=>x.id===currentCat); if(!c) return null;
+  return c.topics.find(t=>t.id===currentTopic);
+}
+
+function setRole(r){
+  role = r; sessionStorage.setItem('helpdesk-role', role);
+  document.getElementById('roleBadge').innerText = role.toUpperCase();
+  toggleUIByRole(); updateLogoutButton(); renderGroups(); document.getElementById('loginModal').style.display='none';
+}
+
+function toggleUIByRole(){
+  document.getElementById('addCatBtn').style.display = role==='admin' ? 'inline-block' : 'none';
+  document.getElementById('addTopicBtn').style.display = (role==='admin' || role==='guest') ? 'inline-block' : 'none';
+  // فقط admin می‌تواند دکمه بازنشانی داده‌ها را ببیند
+  document.getElementById('resetDataBtn').style.display = role==='admin' ? 'inline-block' : 'none';
+}
+
+function updateLogoutButton(){ document.getElementById('logoutBtn').style.display = (role==='guest'||role==='admin')?'inline-block':'none'; }
+
+function attemptLogin(){
+  const selectedRole = document.getElementById('loginRole').value;
+  const pwd = document.getElementById('loginPwd').value;
+  if(selectedRole==='admin' && pwd===ADMIN_PASSWORD){ setRole('admin'); document.getElementById('loginPwd').value=''; alert('خوش آمدی، ادمین'); return; }
+  if(selectedRole==='guest' && pwd===GUEST_PASSWORD){ setRole('guest'); document.getElementById('loginPwd').value=''; alert('ورود به عنوان Guest انجام شد'); return; }
+  alert('پسورد اشتباه است');
+}
+
+function logout(){ sessionStorage.removeItem('helpdesk-role'); role=null; currentGroup=null; currentCat=null; currentTopic=null; document.getElementById('roleBadge').innerText='GUEST'; toggleUIByRole(); updateLogoutButton(); clearContent(); document.getElementById('loginModal').style.display='flex'; document.getElementById('loginPwd').value=''; }
+
+function renderGroups(){
+  const ul = document.getElementById('catList');
+  ul.innerHTML = '';
+
+  data.groups.forEach(g=>{
+    const gli = document.createElement('li');
+    gli.className = 'group' + (g.id===currentGroup ? ' active' : '');
+    const gspan = document.createElement('span');
+    gspan.textContent = g.title;
+    gspan.style.cursor = 'pointer';
+    gspan.onclick = ()=>{ currentGroup = g.id; currentCat = null; currentTopic = null; renderGroups(); clearContent(); };
+    gli.appendChild(gspan);
+
+    if(role==='admin'){
+      const gactions = document.createElement('div');
+      const editG = document.createElement('button'); editG.textContent='✏️';
+      editG.onclick = (ev)=>{ ev.stopPropagation(); const ng = prompt('نام جدید گروه:', g.title); if(ng){ g.title=ng; save(); renderGroups(); } };
+      const delG = document.createElement('button'); delG.textContent='🗑️';
+      delG.onclick = (ev)=>{ ev.stopPropagation(); if(!confirm('آیا گروه و همه‌ی زیرمجموعه‌های آن حذف شوند؟')) return; data.groups = data.groups.filter(x=>x.id!==g.id); if(currentGroup===g.id){ currentGroup = data.groups.length ? data.groups[0].id : null; currentCat=null; currentTopic=null; } save(); renderGroups(); clearContent(); };
+      gactions.appendChild(editG); gactions.appendChild(delG);
+      gli.appendChild(gactions);
+    }
+    ul.appendChild(gli);
+
+    g.categories.forEach(c=>{
+      const cli = document.createElement('li');
+      cli.className = 'category' + (c.id===currentCat ? ' active' : '');
+      const cspan = document.createElement('span');
+      cspan.textContent = c.title;
+      cspan.style.cursor = 'pointer';
+      cspan.onclick = ()=>{ currentGroup = g.id; currentCat = c.id; currentTopic = null; renderGroups(); clearContent(); };
+      cli.appendChild(cspan);
+
+      if(role==='admin'){
+        const cactions = document.createElement('div'); cactions.className='cat-actions';
+        const editBtn = document.createElement('button'); editBtn.textContent='✏️';
+        editBtn.onclick = (ev)=>{ ev.stopPropagation(); const newName = prompt('نام جدید دسته:', c.title); if(newName){ c.title=newName; save(); renderGroups(); } };
+        const delBtn = document.createElement('button'); delBtn.textContent='🗑️';
+        delBtn.onclick = (ev)=>{ ev.stopPropagation(); if(!confirm('آیا از حذف این دسته مطمئن هستید؟')) return; const idx=data.groups.findIndex(x=>x.id===g.id); if(idx>-1){ const catIdx = data.groups[idx].categories.findIndex(x=>x.id===c.id); if(catIdx>-1){ data.groups[idx].categories.splice(catIdx,1); if(currentCat===c.id){ currentCat=null; currentTopic=null; clearContent(); } save(); renderGroups(); } } };
+        cactions.appendChild(editBtn); cactions.appendChild(delBtn);
+        cli.appendChild(cactions);
+      }
+
+      ul.appendChild(cli);
+
+      c.topics.forEach(t=>{
+        const tli = document.createElement('li'); tli.className='topic';
+        const tsp = document.createElement('span'); tsp.textContent = t.title; tsp.style.cursor = 'pointer';
+        tsp.onclick = ()=>{ showTopicById(g.id, c.id, t.id); };
+        tli.appendChild(tsp);
+
+        if(role==='admin'){
+          const actions = document.createElement('div'); actions.className='topic-actions';
+          const editBtn = document.createElement('button'); editBtn.textContent='✏️';
+          editBtn.onclick = (ev)=>{ ev.stopPropagation(); showTopicById(g.id,c.id,t.id); editTopicById(g.id,c.id,t.id); };
+          const delBtn = document.createElement('button'); delBtn.textContent='🗑️';
+          delBtn.onclick = (ev)=>{ ev.stopPropagation(); if(!confirm('آیا مطمئن هستید؟')) return; const grp = data.groups.find(x=>x.id===g.id); if(!grp) return; const cat = grp.categories.find(x=>x.id===c.id); if(!cat) return; cat.topics = cat.topics.filter(tt=>tt.id!==t.id); if(currentTopic===t.id) clearContent(); save(); renderGroups(); };
+          actions.appendChild(editBtn); actions.appendChild(delBtn);
+          tli.appendChild(actions);
+        }
+
+        ul.appendChild(tli);
+      });
+
+    });
+  });
+}
+
+function addCategory(){
+  if(role!=='admin') return alert('برای این کار نیاز به ادمین داری');
+  if(!currentGroup) return alert('ابتدا یکی از گروه‌ها (SAZIBA یا شخصی) را انتخاب کنید');
+  const title = prompt('نام دسته جدید:');
+  if(!title) return;
+  const grp = data.groups.find(g=>g.id===currentGroup);
+  const newCat = { id: Date.now()+Math.floor(Math.random()*1000), title, topics:[] };
+  grp.categories.push(newCat);
+  save(); renderGroups();
+}
+
+function addTopic(){
+  if(!(role==='admin'||role==='guest')) return alert('برای اضافه کردن موضوع باید وارد شوی');
+  if(!currentGroup) return alert('ابتدا یک گروه انتخاب کنید');
+  if(!currentCat) return alert('ابتدا یک دسته (زیرمجموعه) انتخاب کنید');
+  const title = prompt('عنوان موضوع جدید:');
+  if(!title) return;
+  const grp = data.groups.find(g=>g.id===currentGroup);
+  if(!grp) return;
+  const cat = grp.categories.find(c=>c.id===currentCat);
+  if(!cat) return;
+  const newTopic = { id: Date.now()+Math.floor(Math.random()*1000), title, content:'', files:[] };
+  cat.topics.push(newTopic);
+  currentTopic = newTopic.id;
+  save(); renderGroups(); showTopic(newTopic);
+}
+
+function editTopicById(groupId, catId, topicId){ showTopicById(groupId, catId, topicId); }
+
+function showTopicById(groupId, catId, topicId){
+  currentGroup = groupId; currentCat = catId; currentTopic = topicId;
+  const grp = data.groups.find(g=>g.id===groupId); if(!grp) return;
+  const cat = grp.categories.find(c=>c.id===catId); if(!cat) return;
+  const t = cat.topics.find(x=>x.id===topicId); if(!t) return;
+  showTopic(t);
+}
+
+function showTopic(t){
+  currentTopic = t.id;
+  document.getElementById('topicTitle').innerHTML = `<b>${t.title}</b>`;
+  let html = `<textarea id='topicTextarea' ${role==='guest'?'readonly':''}>${t.content}</textarea><div style='height:8px'></div>`;
+  if(role==='admin'){
+    html += `<div class='controls-inline'><button onclick='saveTopic()'>💾 ذخیره</button><input type='file' id='fileInput' style='display:inline-block'><button onclick='uploadFile()'>📎 اضافه کردن فایل</button></div>`;
+  }
+  html += `<div id='filesList'></div>`;
+  document.getElementById('topicContent').innerHTML = html;
+  renderFiles();
+}
+
+function saveTopic(){
+  const t = getCurrentTopicObj(); if(!t) return alert('هیچ موضوعی انتخاب نشده');
+  const ta = document.getElementById('topicTextarea'); if(ta) t.content = ta.value;
+  save(); alert('ذخیره شد');
+}
+
+function uploadFile(){
+  if(role!=='admin') return alert('فقط Admin می‌تواند فایل اضافه کند');
+  const input=document.getElementById('fileInput'); if(!input || input.files.length===0) return;
+  const file=input.files[0];
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const t = getCurrentTopicObj(); if(!t) return alert('ابتدا موضوع را انتخاب کنید');
+    if(!t.files) t.files=[];
+    const fid = Date.now() + Math.floor(Math.random()*1000);
+    t.files.push({fid, name:file.name, content:e.target.result, type:file.type});
+    save(); renderFiles();
+  };
+  reader.readAsDataURL(file);
+  input.value='';
+}
+
+function renderFiles(){
+  const t = getCurrentTopicObj(); const div = document.getElementById('filesList'); if(!div) return; div.innerHTML='';
+  if(!t || !t.files || t.files.length===0) return;
+  t.files.forEach((f)=>{
+    const fileDiv = document.createElement('div'); fileDiv.className='file-item';
+    const left = document.createElement('div'); left.className='file-left';
+    if(f.type && f.type.startsWith('image/')){
+      const img = document.createElement('img'); img.src = f.content; img.className='uploaded-image'; left.appendChild(img);
+    }
+    const nameWrap = document.createElement('div'); nameWrap.className='file-name';
+    if(f.type && f.type==='application/pdf'){
+      const a = document.createElement('a'); a.href = f.content; a.textContent = f.name; a.target = '_blank'; nameWrap.appendChild(a);
+    } else if(f.type && f.type.startsWith('image/')){
+      const span = document.createElement('span'); span.textContent = f.name; nameWrap.appendChild(span);
+    } else {
+      const a = document.createElement('a'); a.href = f.content; a.textContent = f.name; a.target = '_blank'; nameWrap.appendChild(a);
+    }
+    left.appendChild(nameWrap);
+    fileDiv.appendChild(left);
+
+    if(role==='admin'){
+      const actions = document.createElement('div'); actions.className='file-actions';
+      const renameBtn = document.createElement('button'); renameBtn.textContent='✏️';
+      renameBtn.onclick = ()=>{ const newName = prompt('نام جدید فایل:', f.name); if(newName){ f.name = newName; save(); renderFiles(); } };
+      const delBtn = document.createElement('button'); delBtn.textContent='🗑️';
+      delBtn.onclick = ()=>{ if(confirm('حذف فایل؟')){ const t2 = getCurrentTopicObj(); if(!t2) return; const idx2 = t2.files.findIndex(x=>x.fid===f.fid); if(idx2>-1){ t2.files.splice(idx2,1); save(); renderFiles(); } } };
+      actions.appendChild(renameBtn); actions.appendChild(delBtn);
+      fileDiv.appendChild(actions);
+    }
+
+    div.appendChild(fileDiv);
+  });
+}
+
+function clearContent(){ document.getElementById('topicTitle').innerHTML='<b>موضوع انتخاب نشده</b>'; document.getElementById('topicContent').innerHTML=''; }
+
+function resetData(){
+  if(confirm('آیا مطمئن هستید که می‌خواهید همه داده‌ها حذف و بازنشانی شوند؟')){
+    localStorage.removeItem(STORAGE_KEY);
+    data = { groups:[
+      { id: Date.now(), title:'SAZIBA', categories:[] },
+      { id: Date.now()+1, title:'شخصی', categories:[] }
+    ]};
+    currentGroup = data.groups[0].id; currentCat = null; currentTopic = null;
+    save();
+    alert('بازنشانی انجام شد ✅');
+    renderGroups(); clearContent();
+  }
+}
+
+window.onload=function(){ if(!role) document.getElementById('loginModal').style.display='flex'; else setRole(role); renderGroups(); };
+</script>
+</body>
+</html>
